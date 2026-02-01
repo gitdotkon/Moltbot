@@ -1,0 +1,225 @@
+#!/bin/bash
+
+# PPT Assistant - PPT生成助手
+
+set -e
+
+# 配置
+PPT_DIR="${PPT_DIR:-$HOME/.clawnn/ppt}"
+TEMPLATE_DIR="$PPT_DIR/templates"
+UPDATE_INTERVAL="${UPDATE_INTERVAL:-1440}"  # 默认每天更新
+
+# 颜色
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+mkdir -p "$PPT_DIR" "$TEMPLATE_DIR"
+
+log() { echo -e "${GREEN}[$(date '+%H:%M:%S')]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+
+# 检查依赖
+check_deps() {
+    if ! python3 -c "import pptx" 2>/dev/null; then
+        warn "正在安装 python-pptx..."
+        pip3 install python-pptx requests beautifulsoup4 > /dev/null 2>&1
+    fi
+}
+
+# 生成PPTX文件
+create_ppt() {
+    local title="$1"
+    local outline="${2:-}"
+    local slides="${3:-5}"
+    local output="$4"
+    
+    check_deps
+    
+    log "📊 生成PPT: $title"
+    
+    python3 << PYEOF
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.dml.color import RgbColor
+from pptx.enum.text import PP_ALIGN
+import os
+
+# 配置
+output_dir = os.environ.get('PPT_DIR', os.path.expanduser('~/.clawnn/ppt'))
+title = "$title"
+slides_count = int("$slides")
+
+# 创建PPT
+prs = Presentation()
+prs.slide_width = Inches(10)
+prs.slide_height = Inches(7.5)
+
+# 标题页
+title_slide_layout = prs.slide_layouts[0]
+slide = prs.slides.add_slide(title_slide_layout)
+title = slide.shapes.title
+subtitle = slide.placeholders[1]
+title.text = "$title"
+subtitle.text = "由 PPT Assistant 生成\n$(date '+%Y-%m-%d')"
+
+# 内容页
+content_layout = prs.slide_layouts[1]
+
+# 处理大纲
+outline_text = """$outline"""
+lines = [l.strip() for l in outline_text.split('\\n') if l.strip()]
+
+if lines:
+    for i, line in enumerate(lines[:slides_count]):
+        slide = prs.slides.add_slide(content_layout)
+        title = slide.shapes.title
+        title.text = f"第 {i+1} 部分"
+        
+        body = slide.placeholders[1]
+        tf = body.text_frame
+        tf.text = line
+        
+        # 添加更多要点
+        tf.add_paragraph().text = "• 关键要点1"
+        tf.add_paragraph().text = "• 关键要点2"
+        tf.add_paragraph().text = "• 关键要点3"
+else:
+    # 默认内容
+    for i in range(slides_count):
+        slide = prs.slides.add_slide(content_layout)
+        title = slide.shapes.title
+        title.text = f"第 {i+1} 页"
+        
+        body = slide.placeholders[1]
+        tf = body.text_frame
+        tf.text = "这是自动生成的演示内容"
+        tf.add_paragraph().text = "• 要点一"
+        tf.add_paragraph().text = "• 要点二"
+
+# 保存
+output_file = "$output" if "$output" else os.path.join(output_dir, "$title.replace(' ', '_') + '.pptx")
+prs.save(output_file)
+print(f"✅ PPT已生成: {output_file}")
+PYEOF
+}
+
+# 搜索功能
+search_and_create() {
+    local keyword="$1"
+    local sources="${2:-github,stackoverflow}"
+    local limit="${3:-10}"
+    
+    check_deps
+    
+    log "🔍 搜索关键词: $keyword"
+    echo "来源: $sources"
+    
+    # 调用Python脚本进行搜索
+    python3 "$(dirname "$0")/ppt_gen.py" search "$keyword" --sources "$sources" --limit "$limit"
+}
+
+# 更新模板
+update_templates() {
+    log "📥 更新模板..."
+    
+    # 模拟模板下载（实际可从模板网站下载）
+    cat > "$TEMPLATE_DIR/templates.json" << 'EOF'
+{
+    "templates": [
+        {"name": "modern", "url": "modern.pptx", "style": "简约现代"},
+        {"name": "business", "url": "business.pptx", "style": "商务正式"},
+        {"name": "tech", "url": "tech.pptx", "style": "技术风格"},
+        {"name": "creative", "url": "creative.pptx", "style": "创意风格"}
+    ],
+    "last_update": "$(date -Iseconds)"
+}
+EOF
+    
+    info "模板列表已更新"
+    cat "$TEMPLATE_DIR/templates.json"
+}
+
+# 定时任务
+schedule_updates() {
+    log "📅 设置定时更新任务（每天）..."
+    
+    local script="$PPT_DIR/update.sh"
+    cat > "$script" << 'EOF'
+#!/bin/bash
+cd "$(dirname "$0")"
+python3 -c "
+from pptx import Presentation
+from pptx.util import Inches, Pt
+import os
+from datetime import datetime
+
+prs = Presentation()
+slide = prs.slides.add_slide(prs.slide_layouts[0])
+slide.shapes.title.text = '每周热门技术趋势'
+slide.placeholders[1].text = f'更新时间: {datetime.now().strftime("%Y-%m-%d")}'
+
+# 每周更新
+prs.save('weekly_trends.pptx')
+print('✅ 周报模板已更新')
+"
+EOF
+    chmod +x "$script"
+    
+    # 设置crontab
+    (crontab -l 2>/dev/null | grep -v ppt; echo "0 9 * * * $script") | crontab -
+    
+    log "✅ 定时任务已设置（每天 9:00 更新）"
+}
+
+# 显示帮助
+show_help() {
+    cat << EOF
+PPT Assistant - PPT生成助手
+
+用法: ppt <命令> [选项]
+
+命令:
+  create <主题>          生成PPT
+  search <关键词>        搜索并生成
+  update-templates       更新模板
+  schedule               设置定时更新
+  help                   显示帮助
+
+选项:
+  --outline <大纲>       PPT大纲（用\\n分隔）
+  --slides <数量>        幻灯片数量（默认5）
+  --output <文件>        输出文件路径
+  --sources <来源>       数据源（github,stackoverflow,dev.to,medium）
+  --limit <数量>         结果数量（默认10）
+
+示例:
+  ppt create "项目汇报" --outline "概述\\n进度\\n问题\\n计划"
+  ppt search "Python教程" --sources github,stackoverflow
+  ppt create "技术分享" --slides 10 --output my.pptx
+  ppt schedule
+
+EOF
+}
+
+# 主程序
+case "$1" in
+    create)
+        create_ppt "$2" "${3:-}" "${4:-5}" "${5:-}"
+        ;;
+    search)
+        search_and_create "$2" "${3:-github,stackoverflow}" "${4:-10}"
+        ;;
+    update-templates)
+        update_templates
+        ;;
+    schedule)
+        schedule_updates
+        ;;
+    *)
+        show_help
+        ;;
+esac
